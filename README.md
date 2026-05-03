@@ -4,6 +4,35 @@
 
 ---
 
+## Table of Contents
+
+- [What Is This Project?](#what-is-this-project)
+- [Motivation](#motivation)
+- [Relation to RISCover and Our Innovation](#relation-to-riscover-and-our-innovation)
+    - [What RISCover Does](#what-riscover-does)
+    - [The Fundamental Gap RISCover Leaves Open](#the-fundamental-gap-riscover-leaves-open)
+    - [NIRVFuzz's Specific Innovations Over RISCover](#nirvfuzzs-specific-innovations-over-riscover)
+    - [How NIRVFuzz and RISCover Relate](#how-nirvfuzz-and-riscover-relate-in-the-development-lifecycle)
+    - [Summary Comparison](#summary-comparison)
+- [Architecture Overview](#architecture-overview)
+    - [1. RTL Simulation with Verilator](#1-rtl-simulation-with-verilator)
+    - [2. Hardware Feedback Signals](#2-hardware-feedback-signals)
+    - [3. Coverage-Guided Genetic Algorithm Fuzzer](#3-coverage-guided-genetic-algorithm-fuzzer)
+- [Repository Structure](#repository-structure)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Detailed Usage](#detailed-usage)
+    - [Building](#building)
+    - [Running the Fuzzer](#running-the-fuzzer)
+    - [Configuring the Fuzzer](#configuring-the-fuzzer)
+    - [Inspecting Crashes](#inspecting-crashes)
+    - [Running Regression Tests](#running-regression-tests)
+- [How Each File Works](#how-each-file-works)
+- [Output Files](#output-files)
+- [Extending NIRVFuzz](#extending-nirvfuzz)
+
+---
+
 ## What Is This Project?
 
 NIRVFuzz is a simulation-based, coverage-guided fuzzing framework for RISC-V processor cores. It automatically generates and mutates sequences of RISC-V machine instructions, runs them through a Verilator simulation of the target CPU, and uses hardware-observable feedback signals to guide the search toward inputs that expose bugs.
