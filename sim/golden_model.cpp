@@ -100,19 +100,34 @@ void GoldenModel::execute_instruction(uint32_t inst) {
 
     // Decoding logic for basic RV32I
     switch (opcode) {
-        case 0x33: { // R-type (ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU)
+        case 0x33: { // R-type: RV32I ALU + RV32M multiply/divide
             uint32_t val1 = regs[rs1];
             uint32_t val2 = regs[rs2];
             write_reg = true;
-            if (funct3 == 0) rd_val = (funct7 == 0x20) ? (val1 - val2) : (val1 + val2);
-            else if (funct3 == 1) rd_val = val1 << (val2 & 0x1F);
-            else if (funct3 == 2) rd_val = ((int32_t)val1 < (int32_t)val2) ? 1 : 0;
-            else if (funct3 == 3) rd_val = (val1 < val2) ? 1 : 0;
-            else if (funct3 == 4) rd_val = val1 ^ val2;
-            else if (funct3 == 5) rd_val = (funct7 == 0x20) ? ((int32_t)val1 >> (val2 & 0x1F)) : (val1 >> (val2 & 0x1F));
-            else if (funct3 == 6) rd_val = val1 | val2;
-            else if (funct3 == 7) rd_val = val1 & val2;
-            else write_reg = false;
+            if (funct7 == 0x01) { // RV32M extension
+                int32_t s1 = (int32_t)val1, s2 = (int32_t)val2;
+                switch (funct3) {
+                    case 0: rd_val = (uint32_t)(s1 * s2); break;                         // MUL
+                    case 1: rd_val = (uint32_t)(((int64_t)s1 * s2) >> 32); break;        // MULH
+                    case 2: rd_val = (uint32_t)(((int64_t)s1*(uint64_t)val2)>>32); break; // MULHSU
+                    case 3: rd_val = (uint32_t)(((uint64_t)val1*val2)>>32); break;       // MULHU
+                    case 4: rd_val = (s2==0) ? 0xFFFFFFFF : (uint32_t)(s1/s2); break;   // DIV
+                    case 5: rd_val = (val2==0) ? 0xFFFFFFFF : (val1/val2); break;        // DIVU
+                    case 6: rd_val = (s2==0) ? (uint32_t)s1 : (uint32_t)(s1%s2); break; // REM
+                    case 7: rd_val = (val2==0) ? val1 : (val1%val2); break;              // REMU
+                    default: write_reg = false; break;
+                }
+            } else { // RV32I standard ALU
+                if      (funct3 == 0) rd_val = (funct7 == 0x20) ? (val1 - val2) : (val1 + val2);
+                else if (funct3 == 1) rd_val = val1 << (val2 & 0x1F);
+                else if (funct3 == 2) rd_val = ((int32_t)val1 < (int32_t)val2) ? 1 : 0;
+                else if (funct3 == 3) rd_val = (val1 < val2) ? 1 : 0;
+                else if (funct3 == 4) rd_val = val1 ^ val2;
+                else if (funct3 == 5) rd_val = (funct7==0x20) ? ((int32_t)val1>>(val2&0x1F)) : (val1>>(val2&0x1F));
+                else if (funct3 == 6) rd_val = val1 | val2;
+                else if (funct3 == 7) rd_val = val1 & val2;
+                else write_reg = false;
+            }
             break;
         }
         case 0x13: { // I-type (ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI)
@@ -174,29 +189,52 @@ void GoldenModel::execute_instruction(uint32_t inst) {
             if (take) next_pc = pc + imm;
             break;
         }
-        // Simplified Load/Store for memory ops on our 64K array
-        case 0x03: { // Load
+        // Load/Store with full funct3 decoding
+        case 0x03: { // Load: LB, LH, LW, LBU, LHU
             uint32_t addr = regs[rs1] + (((int32_t)inst) >> 20);
-            if (addr < memory.size() - 3) {
-                uint32_t mem_val = memory[addr] | (memory[addr+1]<<8) | (memory[addr+2]<<16) | (memory[addr+3]<<24);
-                // Assume LW for simplicity, could add LH, LB
-                rd_val = mem_val;
-                write_reg = true;
+            if (addr < memory.size()) {
+                if (funct3 == 0) { // LB: sign-extend byte
+                    rd_val = (int32_t)(int8_t)memory[addr];
+                    write_reg = true;
+                } else if (funct3 == 1 && addr + 1 < memory.size()) { // LH: sign-extend halfword
+                    uint16_t hword = memory[addr] | (memory[addr+1] << 8);
+                    rd_val = (int32_t)(int16_t)hword;
+                    write_reg = true;
+                } else if (funct3 == 2 && addr + 3 < memory.size()) { // LW
+                    rd_val = memory[addr] | (memory[addr+1]<<8) | (memory[addr+2]<<16) | (memory[addr+3]<<24);
+                    write_reg = true;
+                } else if (funct3 == 4) { // LBU: zero-extend byte
+                    rd_val = memory[addr];
+                    write_reg = true;
+                } else if (funct3 == 5 && addr + 1 < memory.size()) { // LHU: zero-extend halfword
+                    rd_val = memory[addr] | (memory[addr+1] << 8);
+                    write_reg = true;
+                } else { trapped = true; }
             } else { trapped = true; }
             break;
         }
-        case 0x23: { // Store
-            uint32_t addr = regs[rs1] + ((((inst >> 25) & 0x7F) << 5) | ((inst >> 7) & 0x1F));
-            if (addr < memory.size() - 3) {
-                uint32_t v = regs[rs2];
-                // Assume SW for simplicity
-                memory[addr] = v & 0xFF;
-                memory[addr+1] = (v >> 8) & 0xFF;
-                memory[addr+2] = (v >> 16) & 0xFF;
-                memory[addr+3] = (v >> 24) & 0xFF;
+        case 0x23: { // Store: SB, SH, SW
+            // Reconstruct S-type immediate
+            int32_t simm = (((int32_t)inst) >> 20) & ~0x1F;
+            simm |= (inst >> 7) & 0x1F;
+            uint32_t addr = regs[rs1] + simm;
+            uint32_t v = regs[rs2];
+            if (addr < memory.size()) {
+                if (funct3 == 0) { // SB
+                    memory[addr] = v & 0xFF;
+                } else if (funct3 == 1 && addr + 1 < memory.size()) { // SH
+                    memory[addr]   = v & 0xFF;
+                    memory[addr+1] = (v >> 8) & 0xFF;
+                } else if (funct3 == 2 && addr + 3 < memory.size()) { // SW
+                    memory[addr]   = v & 0xFF;
+                    memory[addr+1] = (v >> 8)  & 0xFF;
+                    memory[addr+2] = (v >> 16) & 0xFF;
+                    memory[addr+3] = (v >> 24) & 0xFF;
+                } else { trapped = true; }
             } else { trapped = true; }
             break;
         }
+
         default:
             trapped = true; // Unimplemented instruction
             break;
