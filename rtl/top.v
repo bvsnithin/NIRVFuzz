@@ -37,7 +37,8 @@ module top (
     output wire [31:0] pc_out,
     output wire [31:0] insn_out,
     output wire        done,          // High for one cycle on EBREAK
-    output wire        trap           // High if CPU trapped (illegal instruction etc)
+    output wire        trap,          // High if CPU trapped (illegal instruction etc)
+    output wire        rvfi_valid_out // High for one cycle when an instruction retires
 );
 
     // -------------------------------------------------------------------------
@@ -152,6 +153,7 @@ module top (
     assign done = (rvfi_valid && (rvfi_insn == 32'h00100073)) || trap;
     assign pc_out = rvfi_pc_rdata;
     assign insn_out = rvfi_insn;
+    assign rvfi_valid_out = rvfi_valid;
 
     // -------------------------------------------------------------------------
     // CRC-32 Snooper instantiation

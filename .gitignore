@@ -10,3 +10,4 @@ fuzzer/crashes/
 fuzzer/__pycache__/
 fuzzer/tmp_child_2208.bin
 seed_corpus/*
+.claude

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <set>
 #include <iomanip>
 #include <stdint.h>
 #include "Vtop.h"
@@ -43,7 +44,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::vector<uint8_t> memory(std::istreambuf_iterator<char>(file), {});
-    
+
+    const size_t BRAM_BYTES = 65536;
+    if (memory.size() > BRAM_BYTES) {
+        std::cerr << "Warning: binary (" << memory.size() << " B) exceeds BRAM ("
+                  << BRAM_BYTES << " B); truncating." << std::endl;
+        memory.resize(BRAM_BYTES);
+    }
+
     Vtop* top = new Vtop;
 
     VerilatedVcdC* tfp = nullptr;
@@ -109,16 +117,28 @@ int main(int argc, char** argv) {
     gm.run(max_cycles);
     uint32_t expected_crc = gm.get_crc();
 
+    std::set<uint32_t> covered_pcs;
+
     while (!Verilated::gotFinish() && cycles < max_cycles) {
         tick(top, tfp);
         cycles++;
         
+        if (top->rvfi_valid_out) {
+            covered_pcs.insert(top->pc_out);
+        }
+
         if (top->done) break;
         if (top->trap) break;
     }
     
     // One extra tick to latch the final RVFI signals
     tick(top, tfp);
+
+    // Golden model validation: warn if clean RTL disagrees with reference model
+    if (!top->trap && expected_crc != top->crc_out) {
+        std::cerr << "GOLDEN_MISMATCH: golden=" << expected_crc
+                  << " rtl=" << top->crc_out << std::endl;
+    }
 
     // Output JSON-like format for the fuzzer to parse easily
     std::cout << "{" << std::endl;
@@ -129,7 +149,17 @@ int main(int argc, char** argv) {
     std::cout << "  \"insn\": " << top->insn_out << "," << std::endl;
     std::cout << "  \"crc_out\": " << top->crc_out << "," << std::endl;
     std::cout << "  \"golden_crc\": " << expected_crc << "," << std::endl;
-    std::cout << "  \"toggle_count\": " << top->toggle_count_out << std::endl;
+    std::cout << "  \"toggle_count\": " << top->toggle_count_out << "," << std::endl;
+    
+    std::cout << "  \"covered_pcs\": [";
+    bool first_pc = true;
+    for (uint32_t pc : covered_pcs) {
+        if (!first_pc) std::cout << ", ";
+        std::cout << pc;
+        first_pc = false;
+    }
+    std::cout << "]" << std::endl;
+    
     std::cout << "}" << std::endl;
 
     if (tfp) {

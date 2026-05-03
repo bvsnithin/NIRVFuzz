@@ -23,4 +23,5 @@ fuzz: all
 	cd fuzzer && python3 fuzzer.py
 
 clean:
-	rm -rf build sim/Vtop sim/Vtop_buggy fuzzer/crashes seed_corpus fuzzer/tmp_*.bin
+	rm -rf build sim/Vtop sim/Vtop_buggy fuzzer/crashes fuzzer/tmp_*.bin
+	rm -f seed_corpus/seed_gen*.bin

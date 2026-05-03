@@ -313,7 +313,7 @@ def run_sim(executable, binary_path):
     try:
         result = subprocess.run(
             [executable, binary_path],
-            capture_output=True, text=True, timeout=5
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=5
         )
         stdout = result.stdout
         start = stdout.find("{")
@@ -343,9 +343,36 @@ def main():
     lengths = [len(bytes_to_program(s.content)) for s in population]
     print(f"Loaded {len(population)} seeds | lengths: {lengths}")
 
-    generation      = 0
-    max_fitness_seen = 0
-    total_crashes   = 0
+    global_coverage = set()
+    pc_champions = {}  # Map PC -> seed filename
+    
+    print("Baselining initial coverage...")
+    for s in population:
+        # We need the PC coverage for the initial seeds.
+        # Run them quickly through the clean sim.
+        path = os.path.join(SEED_DIR, s.filename)
+        res = run_sim(SIM_CLEAN, path)
+        if res:
+            s.fitness = res.get("toggle_count", 0)
+            pcs = res.get("covered_pcs", [])
+            global_coverage.update(pcs)
+            for pc in pcs:
+                # If this PC is new or the seed has better fitness than the current champion, update
+                # Since initial seeds haven't been fully compared, we just assign them for now
+                if pc not in pc_champions:
+                    pc_champions[pc] = s.filename
+                else:
+                    # Find current champion fitness
+                    curr_champ_name = pc_champions[pc]
+                    curr_champ = next((seed for seed in population if seed.filename == curr_champ_name), None)
+                    if curr_champ and s.fitness > curr_champ.fitness:
+                        pc_champions[pc] = s.filename
+
+    print(f"Initial global coverage: {len(global_coverage)} unique PCs")
+
+    generation       = 0
+    max_fitness_seen = max((s.fitness for s in population), default=0)
+    total_crashes    = 0
 
     while True:
         generation += 1
@@ -378,6 +405,7 @@ def main():
 
         toggle_count = clean_res.get("toggle_count", 0)
         crc_clean    = clean_res.get("crc_out", 0)
+        covered_pcs  = set(clean_res.get("covered_pcs", []))
 
         # ── Differential test: run buggy simulation ───────────────────────────
         buggy_res = run_sim(SIM_BUGGY, child_path)
@@ -395,24 +423,71 @@ def main():
                 print(f"    Saved to       : {crash_name}")
                 # Continue fuzzing -- accumulate all diverging inputs
 
-        # ── Coverage-guided selection: keep if new max toggle count ────────────
-        if toggle_count > max_fitness_seen:
+        # ── Coverage-guided selection ──────────────────────────────────────────
+        new_pcs = covered_pcs - global_coverage
+        keep_seed = False
+        is_champion = False
+
+        if new_pcs:
+            global_coverage.update(new_pcs)
+            prog_len = len(bytes_to_program(child_bytes))
+            print(f"\nGen {generation}: Discovered {len(new_pcs)} NEW PCs! "
+                  f"(Total coverage: {len(global_coverage)} PCs, length {prog_len})")
+            keep_seed = True
+            is_champion = True
+
+        elif toggle_count > max_fitness_seen:
             max_fitness_seen = toggle_count
             prog_len = len(bytes_to_program(child_bytes))
             print(f"\nGen {generation}: New max toggle = {toggle_count} "
                   f"({prog_len} instructions)")
+            keep_seed = True
+
+        # Check if it beats any existing champions for known PCs
+        for pc in covered_pcs:
+            if pc in pc_champions:
+                curr_champ_name = pc_champions[pc]
+                curr_champ = next((seed for seed in population if seed.filename == curr_champ_name), None)
+                if curr_champ and toggle_count > curr_champ.fitness:
+                    is_champion = True
+                    keep_seed = True
+
+        if keep_seed:
             new_seed = Seed(f"seed_gen{generation}.bin", child_bytes)
             new_seed.fitness = toggle_count
             population.append(new_seed)
             shutil.copy(child_path, os.path.join(SEED_DIR, new_seed.filename))
 
-            # Cap population at 50, drop lowest fitness
+            # Update champions map
+            for pc in covered_pcs:
+                if pc not in pc_champions:
+                    pc_champions[pc] = new_seed.filename
+                else:
+                    curr_champ_name = pc_champions[pc]
+                    curr_champ = next((seed for seed in population if seed.filename == curr_champ_name), None)
+                    if not curr_champ or toggle_count > curr_champ.fitness:
+                        pc_champions[pc] = new_seed.filename
+
+            # Cap population at 50, but protect champions (novelty-based culling)
             if len(population) > 50:
                 population.sort(key=lambda s: s.fitness, reverse=True)
-                dropped = population.pop()
-                try:
-                    os.remove(os.path.join(SEED_DIR, dropped.filename))
-                except OSError:
+                
+                # Find the lowest fitness seed that is NOT a champion for any PC
+                favored_seeds = set(pc_champions.values())
+                drop_target = None
+                for i in range(len(population)-1, -1, -1):
+                    if population[i].filename not in favored_seeds:
+                        drop_target = i
+                        break
+                
+                if drop_target is not None:
+                    dropped = population.pop(drop_target)
+                    try:
+                        os.remove(os.path.join(SEED_DIR, dropped.filename))
+                    except OSError:
+                        pass
+                else:
+                    # All seeds are champions! Population dynamically expands to preserve novel paths.
                     pass
 
         # ── Cleanup ────────────────────────────────────────────────────────────

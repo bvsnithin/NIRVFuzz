@@ -1228,18 +1228,18 @@ module picorv32 #(
 
 	generate if (TWO_CYCLE_ALU) begin
 		always @(posedge clk) begin
-			alu_add_sub = instr_sub ? reg_op1 - reg_op2 : reg_op1 + reg_op2 + 1; // INJECTED BUG: +1 to ADD
+			alu_add_sub = instr_sub ? reg_op1 - reg_op2 : reg_op1 + reg_op2;
 			alu_eq <= reg_op1 == reg_op2;
-			alu_lts <= $signed(reg_op1) < $signed(reg_op2);
+			alu_lts <= reg_op1 < reg_op2; // INJECTED BUG: signed less-than uses unsigned comparison (wrong when operands have opposite signs)
 			alu_ltu <= reg_op1 < reg_op2;
 			alu_shl <= reg_op1 << reg_op2[4:0];
 			alu_shr <= $signed({instr_sra || instr_srai ? reg_op1[31] : 1'b0, reg_op1}) >>> reg_op2[4:0];
 		end
 	end else begin
 		always @* begin
-			alu_add_sub = instr_sub ? reg_op1 - reg_op2 : reg_op1 + reg_op2 + 1; // INJECTED BUG: +1 to ADD
+			alu_add_sub = instr_sub ? reg_op1 - reg_op2 : reg_op1 + reg_op2;
 			alu_eq = reg_op1 == reg_op2;
-			alu_lts = $signed(reg_op1) < $signed(reg_op2);
+			alu_lts = reg_op1 < reg_op2; // INJECTED BUG: signed less-than uses unsigned comparison (wrong when operands have opposite signs)
 			alu_ltu = reg_op1 < reg_op2;
 			alu_shl = reg_op1 << reg_op2[4:0];
 			alu_shr = $signed({instr_sra || instr_srai ? reg_op1[31] : 1'b0, reg_op1}) >>> reg_op2[4:0];
